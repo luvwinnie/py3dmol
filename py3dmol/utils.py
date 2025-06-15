@@ -20,7 +20,7 @@ atomic_numbers = {'Ac': 89, 'Ag': 47, 'Al': 13, 'Am': 95, 'Ar': 18, 'As': 33, 'A
                   'Uuh': 116, 'Uuo': 118, 'Uup': 115, 'Uuq': 114, 'Uus': 117, 'Uut': 113, 'V': 23,
                   'W': 74, 'Xe': 54, 'Y': 39, 'Yb': 70, 'Zn': 30, 'Zr': 40}
 
-elements = {atnum:el for el,atnum in atomic_numbers.iteritems()}
+elements = {atnum:el for el,atnum in atomic_numbers.items()}
 
 
 def bbox(coords,padding=5.,BIG=1e12):
