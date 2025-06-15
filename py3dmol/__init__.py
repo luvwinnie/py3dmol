@@ -2,6 +2,9 @@ try:
     from py3dmol.highlevel import *
     from py3dmol.interfaces import *
     
+    # Import headless utility functions
+    from py3dmol.backend_3dmol import get_headless_status, cleanup_headless, reinitialize_headless
+    
     # Start the image server when py3dmol is imported
     from py3dmol.image_server import start_server
     try:

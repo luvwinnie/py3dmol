@@ -19,15 +19,33 @@ import logging
 logging.getLogger('selenium').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
+# Global driver cache for faster subsequent captures
+_global_driver_cache = None
+
 class HeadlessCapture:
     """Headless image capture using Selenium WebDriver"""
     
-    def __init__(self):
+    def __init__(self, reuse_driver=True):
         self.driver = None
+        self.reuse_driver = reuse_driver
         self._setup_driver()
     
     def _setup_driver(self):
         """Setup headless Chrome/Firefox driver"""
+        global _global_driver_cache
+        
+        # Try to reuse existing driver if available
+        if self.reuse_driver and _global_driver_cache is not None:
+            try:
+                # Test if driver is still working
+                _global_driver_cache.current_url
+                self.driver = _global_driver_cache
+                print("✅ Reusing existing headless driver (faster!)")
+                return
+            except:
+                # Driver is dead, create new one
+                _global_driver_cache = None
+        
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options as ChromeOptions
@@ -57,11 +75,13 @@ class HeadlessCapture:
                     from webdriver_manager.chrome import ChromeDriverManager
                     service = ChromeService(ChromeDriverManager().install())
                     self.driver = webdriver.Chrome(service=service, options=options)
+                    _global_driver_cache = self.driver
                     print("✅ Headless Chrome driver initialized")
                     return
                 except ImportError:
                     # Try system chromedriver
                     self.driver = webdriver.Chrome(options=options)
+                    _global_driver_cache = self.driver
                     print("✅ Headless Chrome driver initialized (system)")
                     return
                     
@@ -82,10 +102,12 @@ class HeadlessCapture:
                     from webdriver_manager.firefox import GeckoDriverManager
                     service = FirefoxService(GeckoDriverManager().install())
                     self.driver = webdriver.Firefox(service=service, options=options)
+                    _global_driver_cache = self.driver
                     print("✅ Headless Firefox driver initialized")
                     return
                 except ImportError:
                     self.driver = webdriver.Firefox(options=options)
+                    _global_driver_cache = self.driver
                     print("✅ Headless Firefox driver initialized (system)")
                     return
                     
@@ -131,98 +153,77 @@ class HeadlessCapture:
                 # Load the HTML file in headless browser
                 self.driver.get(f"file://{html_file}")
                 
-                # Wait for 3DMol to load and render
-                time.sleep(3)
+                # Smart wait for 3DMol to load and render (with polling instead of fixed sleep)
+                max_wait_time = 8  # Maximum 8 seconds
+                poll_interval = 0.2  # Check every 200ms
+                start_time = time.time()
                 
-                # Check if page loaded properly
-                page_title = self.driver.title
-                print(f"📄 Page title: {page_title}")
-                
-                # Check for JavaScript errors
-                logs = self.driver.get_log('browser')
-                if logs:
-                    print("🔍 Browser console logs:")
-                    for log in logs[-5:]:  # Show last 5 logs
-                        print(f"   {log['level']}: {log['message']}")
-                
-                # Wait for viewer to be ready
-                ready_result = self.driver.execute_script("""
-                    console.log('🔍 Checking viewer readiness...');
+                # Fast polling for viewer readiness
+                while time.time() - start_time < max_wait_time:
+                    try:
+                        ready_result = self.driver.execute_script("""
+                            if (typeof $3Dmol === 'undefined') {
+                                return {status: 'loading', message: '$3Dmol loading...'};
+                            }
+                            
+                            if (!window.viewer) {
+                                return {status: 'loading', message: 'viewer loading...'};
+                            }
+                            
+                            // Force render and check if canvas is ready
+                            window.viewer.render();
+                            var canvas = window.viewer.getCanvas();
+                            
+                            if (!canvas || canvas.width === 0 || canvas.height === 0) {
+                                return {status: 'loading', message: 'canvas loading...'};
+                            }
+                            
+                            return {status: 'success', message: 'Viewer ready'};
+                        """)
+                        
+                        if ready_result and ready_result.get('status') == 'success':
+                            elapsed = time.time() - start_time
+                            print(f"🔍 Viewer readiness check: {ready_result} (took {elapsed:.1f}s)")
+                            break
+                            
+                    except Exception as e:
+                        # Continue polling if JavaScript not ready yet
+                        pass
                     
-                    if (typeof $3Dmol === 'undefined') {
-                        console.log('❌ $3Dmol not loaded');
-                        return {status: 'error', message: '$3Dmol not loaded'};
-                    }
+                    time.sleep(poll_interval)
+                else:
+                    # Timeout reached
+                    print(f"⚠️ Viewer ready timeout after {max_wait_time}s - proceeding anyway")
                     
-                    if (!window.viewer) {
-                        console.log('❌ window.viewer not found');
-                        return {status: 'error', message: 'window.viewer not found'};
-                    }
-                    
-                    console.log('✅ Viewer found, rendering...');
-                    window.viewer.render();
-                    
-                    return {status: 'success', message: 'Viewer ready'};
-                """)
+                    # Check for JavaScript errors only on timeout
+                    try:
+                        logs = self.driver.get_log('browser')
+                        if logs:
+                            print("🔍 Browser console logs:")
+                            for log in logs[-3:]:  # Show last 3 logs only
+                                if log['level'] in ['SEVERE', 'ERROR']:
+                                    print(f"   {log['level']}: {log['message']}")
+                    except:
+                        pass
                 
-                print(f"🔍 Viewer readiness check: {ready_result}")
-                
-                # Wait a bit more for rendering
-                time.sleep(2)
-                
-                # Capture canvas as base64
+                # Fast canvas capture with minimal logging
                 canvas_data = self.driver.execute_script("""
-                    console.log('🎨 Attempting canvas capture...');
-                    
-                    if (!window.viewer) {
-                        console.log('❌ No viewer found');
-                        return null;
-                    }
+                    if (!window.viewer) return null;
                     
                     try {
                         var canvas = window.viewer.getCanvas();
-                        console.log('📷 Canvas:', canvas);
-                        
-                        if (!canvas) {
-                            console.log('❌ No canvas returned from viewer');
-                            return null;
-                        }
-                        
-                        console.log('📐 Canvas size:', canvas.width, 'x', canvas.height);
-                        
-                        if (canvas.width === 0 || canvas.height === 0) {
-                            console.log('❌ Canvas has zero size');
-                            return null;
-                        }
-                        
-                        var dataURL = canvas.toDataURL('image/""" + format + """');
-                        console.log('✅ Canvas captured, data length:', dataURL.length);
-                        
-                        return dataURL;
-                        
+                        if (!canvas || canvas.width === 0 || canvas.height === 0) return null;
+                        return canvas.toDataURL('image/""" + format + """');
                     } catch (error) {
-                        console.log('❌ Error capturing canvas:', error);
                         return null;
                     }
                 """)
                 
-                print(f"🎨 Canvas capture result: {canvas_data is not None}")
                 if canvas_data:
-                    print(f"   📏 Data length: {len(canvas_data)}")
-                
-                if canvas_data:
-                    print(f"✅ Headless image capture successful")
+                    print(f"✅ Headless capture successful")
                     return canvas_data
                 else:
-                    print("❌ No canvas data captured")
-                    
-                    # Get final browser logs
-                    final_logs = self.driver.get_log('browser')
-                    if final_logs:
-                        print("🔍 Final browser logs:")
-                        for log in final_logs[-3:]:
-                            print(f"   {log['level']}: {log['message']}")
-                    
+                    print("❌ Canvas capture failed")
                     return None
                     
             finally:
@@ -239,54 +240,22 @@ class HeadlessCapture:
     def _create_viewer_html(self, viewer, width: int, height: int) -> str:
         """Create standalone HTML file with 3DMol viewer"""
         
-        # Extract the actual commands that were sent to the viewer
-        # This will replay the same molecular data and styling
+        # Fast command extraction - simplified logic
         viewer_commands = []
         
-        print(f"🔍 Extracting commands from viewer (has {len(getattr(viewer, 'commands', []))} commands)")
-        
-        # Get the commands from the viewer object
         if hasattr(viewer, 'commands') and viewer.commands:
-            # Extract the actual JavaScript commands
-            for i, cmd in enumerate(viewer.commands):
-                print(f"  📝 Command {i+1}: {cmd[:100]}...")
-                
-                # Clean up the command by extracting the core JavaScript
-                if 'executeWhenReady' in cmd:
-                    # Extract the inner JavaScript from the wrapper
-                    try_start = cmd.find('try {')
-                    if try_start != -1:
-                        # Find the matching closing brace for the try block
-                        brace_count = 0
-                        start_pos = try_start + 5  # After 'try {'
-                        
-                        for j, char in enumerate(cmd[start_pos:], start_pos):
-                            if char == '{':
-                                brace_count += 1
-                            elif char == '}':
-                                if brace_count == 0:
-                                    # This is the closing brace for the try block
-                                    inner_js = cmd[start_pos:j].strip()
-                                    if inner_js:
-                                        viewer_commands.append(inner_js)
-                                        print(f"    ✅ Extracted: {inner_js[:50]}...")
-                                    break
-                                else:
-                                    brace_count -= 1
-                else:
-                    # Direct command
-                    if cmd.strip():
-                        viewer_commands.append(cmd.strip())
-                        print(f"    ✅ Direct command: {cmd[:50]}...")
+            print(f"🔍 Extracting {len(viewer.commands)} commands...")
+            
+            for cmd in viewer.commands:
+                # Simple extraction - just use the command as-is since we're queueing them now
+                if cmd and cmd.strip():
+                    viewer_commands.append(cmd.strip())
         
         # If no commands found, create a basic empty viewer
         if not viewer_commands:
-            print("⚠️  No commands extracted - creating empty viewer")
-            viewer_commands = [
-                "console.log('⚠️  No molecular data found - creating empty viewer');"
-            ]
-        else:
-            print(f"✅ Extracted {len(viewer_commands)} commands")
+            viewer_commands = ["console.log('Empty viewer created');"]
+        
+        print(f"✅ Using {len(viewer_commands)} commands")
         
         # Join all commands
         commands_js = '\n        '.join(viewer_commands)

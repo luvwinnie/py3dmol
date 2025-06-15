@@ -1,6 +1,6 @@
 #High-level functions for the most common tasks
 
-from py3dmol.backend_3dmol import JS3DMol, EmptyViewer
+from py3dmol.backend_3dmol import JS3DMol, EmptyViewer, get_headless_status, cleanup_headless, reinitialize_headless
 
 def show(obj):
     """

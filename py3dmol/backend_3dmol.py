@@ -53,6 +53,40 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
+# Initialize headless capture capabilities during import
+print("🔧 Initializing py3dmol headless capabilities...")
+_HEADLESS_AVAILABLE = False
+_HEADLESS_CAPTURE = None
+_HEADLESS_ERROR = None
+
+try:
+    from .headless_capture import HeadlessCapture, is_headless_available, capture_headless_image
+    
+    # Try to create a headless capture instance to test availability
+    print("📊 Testing headless driver availability...")
+    _HEADLESS_CAPTURE = HeadlessCapture()
+    _HEADLESS_AVAILABLE = _HEADLESS_CAPTURE.is_available()
+    
+    if _HEADLESS_AVAILABLE:
+        print("✅ Headless capture initialized and ready!")
+        print("   - Selenium webdriver is available")
+        print("   - First image capture will be faster")
+    else:
+        print("⚠️ Headless capture initialized but no webdriver available")
+        print("   - Install Chrome/Firefox and selenium for headless support")
+        print("   - pip install selenium webdriver-manager")
+        _HEADLESS_CAPTURE = None
+        
+except ImportError as e:
+    _HEADLESS_ERROR = f"Missing dependencies: {e}"
+    print(f"⚠️ Headless capture not available: {_HEADLESS_ERROR}")
+    print("   - Install with: pip install selenium webdriver-manager")
+except Exception as e:
+    _HEADLESS_ERROR = f"Initialization error: {e}"
+    print(f"⚠️ Headless capture initialization failed: {_HEADLESS_ERROR}")
+
+
+
 # Try to import and initialize 3Dmol.js
 try:
     import pkg_resources
@@ -486,24 +520,32 @@ class JS3DMol(object):
 
     def _get_image_data_headless(self, format='png', width=None, height=None, antialias=True):
         """Get image data using headless capture method (for terminal/headless environments)"""
-        try:
-            from .headless_capture import capture_headless_image, is_headless_available
-            
-            if not is_headless_available():
+        global _HEADLESS_AVAILABLE, _HEADLESS_CAPTURE, _HEADLESS_ERROR
+        
+        # Check if headless capture was initialized during import
+        if not _HEADLESS_AVAILABLE:
+            if _HEADLESS_ERROR:
+                print(f"❌ Headless capture not available: {_HEADLESS_ERROR}")
+            else:
                 print("❌ Headless capture not available")
                 print("💡 Install selenium: pip install selenium webdriver-manager")
-                return None
-                
-            # Use default dimensions if not specified
-            if width is None:
-                width = self.width
-            if height is None:
-                height = self.height
-                
-            print(f"🔧 Using headless capture: {width}x{height}, format: {format}")
+            return None
+        
+        if not _HEADLESS_CAPTURE:
+            print("❌ Headless capture instance not available")
+            return None
             
-            # Capture image using headless method
-            image_data = capture_headless_image(self, width, height, format)
+        # Use default dimensions if not specified
+        if width is None:
+            width = self.width
+        if height is None:
+            height = self.height
+            
+        print(f"🔧 Using pre-initialized headless capture: {width}x{height}, format: {format}")
+        
+        # Use the pre-initialized headless capture instance
+        try:
+            image_data = _HEADLESS_CAPTURE.capture_viewer_image(self, width, height, format)
             
             if image_data:
                 print("✅ Headless capture successful")
@@ -512,9 +554,8 @@ class JS3DMol(object):
                 print("❌ Headless capture failed")
                 return None
                 
-        except ImportError as e:
-            print(f"❌ Headless capture dependencies not available: {e}")
-            print("💡 Install selenium: pip install selenium webdriver-manager")
+        except Exception as e:
+            print(f"❌ Headless capture error: {e}")
             return None
 
     def get_pil_image(self, img_format='png', width=None, height=None, antialias=True, force_headless=False):
@@ -603,6 +644,28 @@ class JS3DMol(object):
     def test_server_connection(self):
         """Test if the FastAPI server is accessible"""
         return self._test_server_connectivity()
+    
+    def get_headless_status(self):
+        """Get headless capture status for this viewer"""
+        global _HEADLESS_AVAILABLE, _HEADLESS_CAPTURE, _HEADLESS_ERROR
+        return {
+            'available': _HEADLESS_AVAILABLE,
+            'initialized': _HEADLESS_CAPTURE is not None,
+            'error': _HEADLESS_ERROR,
+            'driver_type': getattr(_HEADLESS_CAPTURE, 'driver', {}).get('name', 'unknown') if _HEADLESS_CAPTURE else None
+        }
+    
+    @staticmethod
+    def cleanup_headless():
+        """Cleanup headless resources"""
+        global _HEADLESS_CAPTURE
+        if _HEADLESS_CAPTURE:
+            try:
+                _HEADLESS_CAPTURE.close()
+                print("✅ Headless driver cleaned up")
+            except:
+                pass
+            _HEADLESS_CAPTURE = None
 
     def show(self):
         """Show the viewer"""
@@ -1025,3 +1088,69 @@ class EmptyViewer(JS3DMol):
     EmptyViewer class - alias for JS3DMol for backward compatibility
     """
     pass
+
+
+# Module-level utility functions
+def get_headless_status():
+    """Get global headless status information"""
+    global _HEADLESS_AVAILABLE, _HEADLESS_CAPTURE, _HEADLESS_ERROR
+    return {
+        'available': _HEADLESS_AVAILABLE,
+        'initialized': _HEADLESS_CAPTURE is not None,
+        'error': _HEADLESS_ERROR,
+        'driver_ready': _HEADLESS_CAPTURE is not None and _HEADLESS_CAPTURE.is_available() if _HEADLESS_CAPTURE else False
+    }
+
+def cleanup_headless():
+    """Cleanup global headless resources"""
+    global _HEADLESS_CAPTURE
+    if _HEADLESS_CAPTURE:
+        try:
+            _HEADLESS_CAPTURE.close()
+            print("✅ Global headless driver cleaned up")
+        except:
+            pass
+        _HEADLESS_CAPTURE = None
+
+def reinitialize_headless():
+    """Reinitialize headless capture (useful if it failed during import)"""
+    global _HEADLESS_AVAILABLE, _HEADLESS_CAPTURE, _HEADLESS_ERROR
+    
+    print("🔄 Reinitializing headless capture...")
+    
+    # Clean up existing instance
+    cleanup_headless()
+    
+    # Reset state
+    _HEADLESS_AVAILABLE = False
+    _HEADLESS_ERROR = None
+    
+    try:
+        from .headless_capture import HeadlessCapture
+        
+        print("📊 Creating new headless capture instance...")
+        _HEADLESS_CAPTURE = HeadlessCapture()
+        _HEADLESS_AVAILABLE = _HEADLESS_CAPTURE.is_available()
+        
+        if _HEADLESS_AVAILABLE:
+            print("✅ Headless capture reinitialized successfully!")
+            return True
+        else:
+            print("⚠️ Headless capture reinitialized but no webdriver available")
+            _HEADLESS_CAPTURE = None
+            return False
+            
+    except Exception as e:
+        _HEADLESS_ERROR = f"Reinitialization error: {e}"
+        print(f"❌ Headless capture reinitialization failed: {_HEADLESS_ERROR}")
+        return False
+
+# Print final initialization status
+print(f"🔧 py3dmol backend initialization complete")
+print(f"   - IPython support: {'✅ Available' if HAS_IPYTHON else '❌ Not available'}")
+print(f"   - PIL support: {'✅ Available' if HAS_PIL else '❌ Not available'}")
+print(f"   - NumPy support: {'✅ Available' if HAS_NUMPY else '❌ Not available'}")
+print(f"   - Headless capture: {'✅ Ready' if _HEADLESS_AVAILABLE else '❌ Not available'}")
+if _HEADLESS_ERROR:
+    print(f"   - Headless error: {_HEADLESS_ERROR}")
+print("🚀 Ready to create 3DMol viewers!")
