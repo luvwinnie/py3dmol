@@ -517,7 +517,7 @@ class JS3DMol(object):
             print("💡 Install selenium: pip install selenium webdriver-manager")
             return None
 
-    def get_pil_image(self, format='png', width=None, height=None, antialias=True, force_headless=False):
+    def get_pil_image(self, img_format='png', width=None, height=None, antialias=True, force_headless=False):
         """
         Get PIL Image object from the viewer
         
@@ -536,7 +536,7 @@ class JS3DMol(object):
             return None
             
         # Get image data
-        image_data = self.get_image_data(format, width, height, antialias, force_headless)
+        image_data = self.get_image_data(img_format, width, height, antialias, force_headless)
         
         if not image_data:
             return None
@@ -558,7 +558,7 @@ class JS3DMol(object):
             print(f"❌ Error creating PIL image: {e}")
             return None
 
-    def get_numpy_image(self, format='png', width=None, height=None, antialias=True, force_headless=False):
+    def get_numpy_image(self, img_format='png', width=None, height=None, antialias=True, force_headless=False):
         """
         Get NumPy array from the viewer
         
@@ -577,7 +577,7 @@ class JS3DMol(object):
             return None
 
         # Get PIL image first
-        pil_image = self.get_pil_image(format, width, height, antialias, force_headless)
+        pil_image = self.get_pil_image(img_format, width, height, antialias, force_headless)
         
         if not pil_image:
             return None
